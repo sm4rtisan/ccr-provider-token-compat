@@ -1,9 +1,40 @@
 {
   "rules": [
     {
-      "provider": "openai",
-      "chatUseMaxCompletionTokens": true,
-      "responsesMinOutputTokens": 16
+      "name": "Chat 输出参数兼容",
+      "enabled": true,
+      "match": {
+        "providers": [
+          "openai"
+        ],
+        "protocol": "openai_chat_completions"
+      },
+      "actions": [
+        {
+          "type": "rename",
+          "from": "max_tokens",
+          "to": "max_completion_tokens",
+          "ifTargetExists": "keep"
+        }
+      ]
+    },
+    {
+      "name": "Responses 最低输出上限",
+      "enabled": true,
+      "match": {
+        "providers": [
+          "openai"
+        ],
+        "protocol": "openai_responses"
+      },
+      "actions": [
+        {
+          "type": "minimum",
+          "field": "max_output_tokens",
+          "value": 16,
+          "ifMissing": "skip"
+        }
+      ]
     }
   ]
 }

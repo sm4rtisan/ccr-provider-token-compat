@@ -30,9 +30,77 @@ volumes:
 
 请选目录，不是 index.cjs。不要选浏览器所在电脑上的目录。安装路径必须保持有效，升级或重建容器后仍要保留挂载。
 
-## 处理范围
+## 页面配置与规则
 
-默认 settings.json：
+打开扩展右侧的设置齿轮，把以下内容粘贴到最下面的 **插件配置 JSON** 框，保存并重启网关。这里不需要再包一层 config。
+
+```json
+{
+  "rules": [
+    {
+      "name": "Chat 输出参数兼容",
+      "enabled": true,
+      "match": {
+        "providers": [
+          "openai"
+        ],
+        "protocol": "openai_chat_completions"
+      },
+      "actions": [
+        {
+          "type": "rename",
+          "from": "max_tokens",
+          "to": "max_completion_tokens",
+          "ifTargetExists": "keep"
+        }
+      ]
+    },
+    {
+      "name": "Responses 最低输出上限",
+      "enabled": true,
+      "match": {
+        "providers": [
+          "openai"
+        ],
+        "protocol": "openai_responses"
+      },
+      "actions": [
+        {
+          "type": "minimum",
+          "field": "max_output_tokens",
+          "value": 16,
+          "ifMissing": "skip"
+        }
+      ]
+    }
+  ]
+}
+```
+
+### 匹配方式
+
+- `name`：可选的规则名称，便于识别。
+- `enabled`：是否启用；省略时为 true。设为 false 后不参与处理，也不要求其供应商仍存在。
+- `match.providers`：一个或多个 CCR 供应商名称，不是模型名称；名称匹配忽略大小写。必须明确填写，不支持通配符。
+- `match.protocol`：实际发给供应商的协议，不是客户端入口协议。支持 openai_chat_completions、openai_responses、anthropic_messages、gemini_generate_content、gemini_interactions。
+- `actions`：动作数组，按顺序执行；所有符合条件的规则也按配置顺序执行，不是仅处理第一条。
+
+同一供应商下所有模型都适用对应规则。不要给仍使用旧 Chat 参数的供应商开启改名规则；有混合需求时，可在 CCR 中拆成两个供应商配置。本版不支持按模型筛选，也不支持通配符和嵌套字段。
+
+### 两种处理动作
+
+| 动作 | 行为 |
+| --- | --- |
+| rename | 将 from 字段改名为 to，保留原值；原字段不存在时跳过 |
+| minimum | 将 field 中小于 value 的正整数提高到 value；其余值保持原样 |
+
+rename 的 `ifTargetExists` 目前仅支持 `keep`（默认）：目标字段已存在时保留目标值，同时删除旧字段。minimum 的 `ifMissing` 目前仅支持 `skip`（默认）：字段缺失时不会创建它。0、负数、小数及字符串不属于有效的正整数上限，不会被自动修正。
+
+字段只支持顶层名称，如 max_tokens；不支持 request.body.max_tokens 或 metadata.user_id。配置错误、拼写错误和不支持的动作会在启动时明确报错，避免静默失效。每条规则必须明确指定协议。
+
+### 兼容旧配置
+
+原配置仍然可用，无需立即迁移：
 
 ```json
 {
@@ -46,15 +114,7 @@ volumes:
 }
 ```
 
-- 对该供应商下所有模型生效，不根据模型名称判断。
-- 根据转换完成后实际选择的供应商协议处理，不根据 Claude Code 的入口协议推测。
-- Chat：删除旧的 max_tokens，并将原值放入 max_completion_tokens。如新字段已经存在，保留新字段的值。
-- Responses：仅把大于 0、小于 16 的整数 max_output_tokens 提高到 16；8192 等正常值不变。
-- 未传输出上限时不主动添加；无效值不偷偷修正。
-- 其他协议、其他供应商、消息内容和 metadata 不变。
-- 支持 CCR 3.1.5 的供应商内部别名和密钥池名称。
-
-同一供应商下所有模型应支持对应选项。若有模型仍要求旧 Chat 参数，请将 chatUseMaxCompletionTokens 设为 false，或在 CCR 中建立独立的供应商配置后分别设置。
+新旧规则可以分别放在同一 rules 数组里，按数组顺序执行；单条规则内不能混用两种格式。`rules: []` 可关闭所有处理。页面 config 包含 rules 时优先于 settings.json；修改后重启网关。插件只修改请求副本，不修改原请求，也不更改 metadata、消息或请求头。
 
 ## 检查连接的边界
 
@@ -62,7 +122,7 @@ volumes:
 
 ## 验证
 
-已使用真实 ai-gateway 1.0.21 和本机模拟供应商验证来自 /v1/messages 的请求：Chat 与 Responses、上限 1 与 8192、匹配与不匹配的供应商，共 8 次请求全部通过。另有参数优先级、原始请求不被修改、设置校验等检查。
+已使用真实 ai-gateway 1.0.21 和本机模拟供应商验证来自 /v1/messages 的请求：Chat 与 Responses、上限 1 与 8192、匹配与不匹配的供应商，共 8 次请求全部通过。另有新旧格式兼容、顺序执行、多供应商、开关、参数优先级、原始请求不被修改、设置校验等检查。
 
 没有使用真实 API Key，没有访问真实供应商，也没有在你的 Docker 容器内安装。
 

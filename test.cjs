@@ -130,3 +130,61 @@ test('real ai-gateway: Anthropic requests reach mock providers through the insta
   }
 });
 async function listen(server) { await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); }); }
+
+function rule(protocol, actions, extra = {}) {
+  return { name: 'test', enabled: true, match: { providers: ['openai'], protocol }, actions, ...extra };
+}
+test('legacy settings keep the same behavior', () => {
+  const settings = { rules: [{ provider: 'openai', chatUseMaxCompletionTokens: true, responsesMinOutputTokens: 16 }] };
+  assert.deepEqual(transform('openai_chat_completions', { max_tokens: 8192 }, undefined, settings), { max_completion_tokens: 8192 });
+  assert.deepEqual(transform('openai_responses', { max_output_tokens: 1 }, undefined, settings), { max_output_tokens: 16 });
+  assert.deepEqual(transform('openai_responses', { max_output_tokens: 1 }, undefined, { rules: [] }), { max_output_tokens: 1 });
+});
+test('matching rules and actions run in order; renamed fields feed later actions', () => {
+  const settings = { rules: [
+    rule('openai_chat_completions', [{ type: 'rename', from: 'max_tokens', to: 'max_completion_tokens' }]),
+    rule('openai_chat_completions', [{ type: 'minimum', field: 'max_completion_tokens', value: 16 }]),
+    rule('openai_responses', [{ type: 'rename', from: 'metadata', to: 'should_not_exist' }]),
+  ] };
+  assert.deepEqual(transform('openai_chat_completions', { max_tokens: 1, metadata: 'kept' }, undefined, settings), { max_completion_tokens: 16, metadata: 'kept' });
+  assert.deepEqual(transform('openai_chat_completions', { max_tokens: 1, max_completion_tokens: 4096 }, undefined, settings), { max_completion_tokens: 4096 });
+  assert.deepEqual(transform('openai_chat_completions', {}, undefined, settings), {});
+});
+test('multiple providers match their own runtime aliases; disabled missing providers do not block startup', () => {
+  let registered;
+  const settings = { rules: [rule('openai_responses', [{ type: 'minimum', field: 'max_output_tokens', value: 32 }], { match: { providers: [' OPENAI ', 'second'], protocol: 'openai_responses' } }),
+    rule('openai_responses', [{ type: 'minimum', field: 'max_output_tokens', value: 100 }], { enabled: false, match: { providers: ['missing'], protocol: 'openai_responses' } })] };
+  setup({ config: { Providers: [{ name: 'openai', id: 'openai' }, { name: 'second', id: 'second-id' }] }, pluginConfig: settings, registerCoreGatewayPlugin(value) { registered = value; } });
+  const hook = createGatewayPlugin({ plugin: registered }).providerHooks[0];
+  for (const name of ['provider-openai::openai_responses', 'second-id::openai_responses::cred:key']) {
+    assert.equal(hook.transformRequest({ targetProviderConfig: { name, type: 'openai_responses' }, upstreamRequest: { body: { max_output_tokens: 1 } } }).value.body.max_output_tokens, 32);
+  }
+  assert.deepEqual(transform('openai_responses', { max_output_tokens: 1 }, undefined, { rules: [rule('openai_responses', [{ type: 'minimum', field: 'max_output_tokens', value: 32 }], { enabled: false })] }), { max_output_tokens: 1 });
+});
+test('rejects unsafe paths, typos, mixed formats, unsupported actions and invalid options', () => {
+  const action = { type: 'minimum', field: 'max_output_tokens', value: 16 };
+  const invalid = [
+    rule('typo', [action]), rule('openai_responses', []),
+    rule('openai_responses', [{ type: 'delete', field: 'metadata' }]),
+    rule('openai_responses', [{ ...action, field: '__proto__' }]),
+    rule('openai_responses', [{ ...action, field: 'metadata.user' }]),
+    rule('openai_responses', [{ ...action, value: 0 }]),
+    rule('openai_responses', [{ ...action, ifMissing: 'set' }]),
+    rule('openai_responses', [{ type: 'rename', from: 'max_tokens', to: 'max_tokens' }]),
+    rule('openai_responses', [{ type: 'rename', from: 'max_tokens', to: 'max_completion_tokens', ifTargetExists: 'overwrite' }]),
+    rule('openai_responses', [action], { enabled: 'false' }),
+    rule('openai_responses', [action], { provider: 'openai' }),
+    rule('openai_responses', [action], { match: { providers: [], protocol: 'openai_responses' } }),
+    rule('openai_responses', [action], { unexpected: true }),
+  ];
+  for (const item of invalid) assert.throws(() => registration(undefined, { rules: [item] }), JSON.stringify(item));
+});
+test('non-JSON bodies pass through unchanged', () => {
+  const hook = createGatewayPlugin({ plugin: registration() }).providerHooks[0];
+  for (const body of [null, [], 'text']) {
+    const request = { body };
+    assert.equal(hook.transformRequest({ targetProviderConfig: { name: 'provider-openai', type: 'openai_responses' }, upstreamRequest: request }).value, request);
+  }
+  const request = { body: { max_output_tokens: 1 }, bodyEncoding: 'text' };
+  assert.equal(hook.transformRequest({ targetProviderConfig: { name: 'provider-openai', type: 'openai_responses' }, upstreamRequest: request }).value, request);
+});
