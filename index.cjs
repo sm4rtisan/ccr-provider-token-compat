@@ -2,6 +2,8 @@
 const { createHash } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const metadata = require('./plugin.json');
+const manifest = { name: metadata.id, version: metadata.version };
 
 function cleanId(value) {
   return String(value || '').trim().toLowerCase().replace(/[^a-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '');
@@ -47,27 +49,17 @@ function readAction(action) {
 function readRules(value) {
   allowedKeys(value, ['rules'], '配置');
   if (!Array.isArray(value.rules)) throw new Error('配置必须包含 rules 数组');
-  return value.rules.flatMap((rule) => {
+  return value.rules.map((rule) => {
     if (!record(rule)) throw new Error('规则必须为对象');
     if (rule.enabled !== undefined && typeof rule.enabled !== 'boolean') throw new Error('enabled 必须为 true 或 false');
     if (rule.name !== undefined && typeof rule.name !== 'string') throw new Error('name 必须为字符串');
     const common = { name: rule.name, enabled: rule.enabled !== false };
-    if (Object.hasOwn(rule, 'provider')) {
-      allowedKeys(rule, ['name', 'enabled', 'provider', 'chatUseMaxCompletionTokens', 'responsesMinOutputTokens'], '旧规则');
-      if (typeof rule.provider !== 'string' || !rule.provider.trim()) throw new Error('必须指定供应商名称');
-      if (rule.chatUseMaxCompletionTokens !== undefined && typeof rule.chatUseMaxCompletionTokens !== 'boolean') throw new Error('chatUseMaxCompletionTokens 必须为布尔值');
-      const providers = [rule.provider.trim()];
-      const expanded = [];
-      if (rule.chatUseMaxCompletionTokens) expanded.push({ ...common, match: { providers, protocol: 'openai_chat_completions' }, actions: [readAction({ type: 'rename', from: 'max_tokens', to: 'max_completion_tokens' })] });
-      if (rule.responsesMinOutputTokens !== undefined) expanded.push({ ...common, match: { providers, protocol: 'openai_responses' }, actions: [readAction({ type: 'minimum', field: 'max_output_tokens', value: rule.responsesMinOutputTokens })] });
-      return expanded.length ? expanded : [{ ...common, match: { providers, protocol: 'openai_chat_completions' }, actions: [] }];
-    }
     allowedKeys(rule, ['name', 'enabled', 'match', 'actions'], '规则');
     allowedKeys(rule.match, ['providers', 'protocol'], 'match');
     if (!Array.isArray(rule.match.providers) || !rule.match.providers.length || rule.match.providers.some(name => typeof name !== 'string' || !name.trim())) throw new Error('match.providers 必须为非空供应商名称数组');
     if (!protocols.includes(rule.match.protocol)) throw new Error('match.protocol 必须为支持的实际供应商协议');
     if (!Array.isArray(rule.actions) || !rule.actions.length) throw new Error('actions 不能为空');
-    return [{ ...common, match: { providers: rule.match.providers.map(name => name.trim()), protocol: rule.match.protocol }, actions: rule.actions.map(readAction) }];
+    return { ...common, match: { providers: rule.match.providers.map(name => name.trim()), protocol: rule.match.protocol }, actions: rule.actions.map(readAction) };
   });
 }
 
@@ -88,6 +80,7 @@ function setup(ctx) {
     key: 'provider-token-compat',
     enabled: true,
     modulePath: __filename,
+    manifest,
     config: { rules },
   });
 }
@@ -125,4 +118,4 @@ function createGatewayPlugin({ plugin }) {
   };
 }
 
-module.exports = { setup, createGatewayPlugin };
+module.exports = { setup, createGatewayPlugin, manifest };

@@ -2,6 +2,12 @@
   "id": "provider-token-compat",
   "name": "供应商输出参数兼容",
   "module": "index.cjs",
-  "surfaces": ["gateway"],
-  "permissions": ["trusted-code", "core-gateway-plugins"]
+  "surfaces": [
+    "gateway"
+  ],
+  "permissions": [
+    "trusted-code",
+    "core-gateway-plugins"
+  ],
+  "version": "2.0.0"
 }

@@ -1,11 +1,13 @@
 # 供应商输出参数兼容扩展
 
+当前版本：**2.0.0**。更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+
 适用于已核对的 CCR 3.1.5 和 ai-gateway 1.0.21。独立扩展，无第三方依赖，不修改 CCR 源码。
 
 ## 安装
 
 1. 解压整个目录，保留 plugin.json、index.cjs、settings.json，不能只复制单个文件。
-2. 默认配置匹配 CCR 中名称为 openai 的供应商。如果名称不同，修改 settings.json 的 provider。填写供应商名称，不是模型名称。
+2. 默认配置匹配 CCR 中名称为 openai 的供应商。如果名称不同，修改 settings.json 中 match.providers。填写供应商名称，不是模型名称。
 3. CCR → 扩展 → 安装 → 选择本地目录，选择整个 ccr-provider-token-compat 目录，然后保存并重启网关。
 4. 停用之前删除 max_tokens 等参数的全局路由规则或路由脚本，否则扩展无法恢复已被删除的上限。
 5. 用 Claude Code 发一条新消息，再在 CCR 日志中查看实际发给供应商的请求。
@@ -98,23 +100,11 @@ rename 的 `ifTargetExists` 目前仅支持 `keep`（默认）：目标字段已
 
 字段只支持顶层名称，如 max_tokens；不支持 request.body.max_tokens 或 metadata.user_id。配置错误、拼写错误和不支持的动作会在启动时明确报错，避免静默失效。每条规则必须明确指定协议。
 
-### 兼容旧配置
+### 配置更新
 
-原配置仍然可用，无需立即迁移：
+只支持上面的 match + actions 格式。旧的 provider、chatUseMaxCompletionTokens、responsesMinOutputTokens 配置不再接受；升级前请将页面“插件配置 JSON”替换为新示例，或填 {} 使用新版 settings.json 默认规则，否则启动会报配置错误。
 
-```json
-{
-  "rules": [
-    {
-      "provider": "openai",
-      "chatUseMaxCompletionTokens": true,
-      "responsesMinOutputTokens": 16
-    }
-  ]
-}
-```
-
-新旧规则可以分别放在同一 rules 数组里，按数组顺序执行；单条规则内不能混用两种格式。`rules: []` 可关闭所有处理。页面 config 包含 rules 时优先于 settings.json；修改后重启网关。插件只修改请求副本，不修改原请求，也不更改 metadata、消息或请求头。
+`rules: []` 可关闭所有处理。页面 config 包含 rules 时优先于 settings.json；修改后重启网关。插件只修改请求副本，不修改原请求，也不更改 metadata、消息或请求头。
 
 ## 检查连接的边界
 
@@ -122,7 +112,7 @@ rename 的 `ifTargetExists` 目前仅支持 `keep`（默认）：目标字段已
 
 ## 验证
 
-已使用真实 ai-gateway 1.0.21 和本机模拟供应商验证来自 /v1/messages 的请求：Chat 与 Responses、上限 1 与 8192、匹配与不匹配的供应商，共 8 次请求全部通过。另有新旧格式兼容、顺序执行、多供应商、开关、参数优先级、原始请求不被修改、设置校验等检查。
+已使用真实 ai-gateway 1.0.21 和本机模拟供应商验证来自 /v1/messages 的请求：Chat 与 Responses、上限 1 与 8192、匹配与不匹配的供应商，共 8 次请求全部通过。另有旧格式拒绝检查、顺序执行、多供应商、开关、参数优先级、原始请求不被修改、设置校验等检查。
 
 没有使用真实 API Key，没有访问真实供应商，也没有在你的 Docker 容器内安装。
 
@@ -143,3 +133,13 @@ CCR_TEST_GATEWAY_ENTRY=/absolute/path/to/ai-gateway/dist/index.js node --test te
 ## 停用
 
 在 CCR 扩展页关闭或删除本扩展，再重启网关。无需还原 CCR 源码。
+
+## 版本维护
+
+版本号统一维护在 `plugin.json` 的 `version`，运行时的扩展信息直接读取它，不另外硬编码。每次发布都需要更新该值和 CHANGELOG.md；README 顶部当前版本同步更新。
+
+- 修复问题且配置不变：增加末位版本号，例如 2.0.0 → 2.0.1。
+- 新增向下兼容的能力：增加中间版本号，例如 2.0.0 → 2.1.0。
+- 删除配置支持等不兼容改动：增加首位版本号，例如 2.0.0 → 3.0.0。
+
+本版移除了旧配置，故从最初未标记版本的版本升级为 2.0.0。升级时先把 CCR 页面中的旧配置改为新版 match + actions。CCR 3.1.5 扩展列表没有独立的版本列；可在本目录 plugin.json 或 README 查看版本，填写版本号并不会自动增加 CCR 的显示栏目。

@@ -46,13 +46,13 @@ test('other providers, protocols and disabled options remain unchanged', () => {
   const body = { max_tokens: 1, max_output_tokens: 1 };
   assert.deepEqual(transform('anthropic_messages', body), body);
   assert.deepEqual(transform('openai_responses', body, 'unrelated-provider'), body);
-  const settings = { rules: [{ provider: 'openai', chatUseMaxCompletionTokens: false }] };
+  const settings = { rules: [rule('openai_chat_completions', [{ type: 'rename', from: 'max_tokens', to: 'max_completion_tokens' }], { enabled: false })] };
   assert.deepEqual(transform('openai_chat_completions', body, 'provider-openai', settings), body);
 });
 test('validates settings and generates CCR aliases for providers with and without IDs', () => {
   assert.ok(registration({ name: 'openai', baseurl: 'http://example.test' }).config.rules[0].aliases[1].startsWith('provider-openai-'));
-  assert.throws(() => registration(undefined, { rules: [{ provider: 'openai', responsesMinOutputTokens: 0 }] }));
-  assert.throws(() => registration(undefined, { rules: [{ provider: 'missing' }] }));
+  assert.throws(() => registration(undefined, { rules: [rule('openai_responses', [{ type: 'minimum', field: 'max_output_tokens', value: 0 }])] }));
+  assert.throws(() => registration(undefined, { rules: [rule('openai_responses', [{ type: 'minimum', field: 'max_output_tokens', value: 16 }], { match: { providers: ['missing'], protocol: 'openai_responses' } })] }));
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, 'plugin.json')));
   assert.equal(manifest.module, 'index.cjs');
   assert.ok(manifest.permissions.includes('core-gateway-plugins'));
@@ -134,10 +134,8 @@ async function listen(server) { await new Promise((resolve, reject) => { server.
 function rule(protocol, actions, extra = {}) {
   return { name: 'test', enabled: true, match: { providers: ['openai'], protocol }, actions, ...extra };
 }
-test('legacy settings keep the same behavior', () => {
-  const settings = { rules: [{ provider: 'openai', chatUseMaxCompletionTokens: true, responsesMinOutputTokens: 16 }] };
-  assert.deepEqual(transform('openai_chat_completions', { max_tokens: 8192 }, undefined, settings), { max_completion_tokens: 8192 });
-  assert.deepEqual(transform('openai_responses', { max_output_tokens: 1 }, undefined, settings), { max_output_tokens: 16 });
+test('legacy settings are rejected and an empty rules array disables processing', () => {
+  assert.throws(() => registration(undefined, { rules: [{ provider: 'openai', chatUseMaxCompletionTokens: true, responsesMinOutputTokens: 16 }] }), /不支持的字段/);
   assert.deepEqual(transform('openai_responses', { max_output_tokens: 1 }, undefined, { rules: [] }), { max_output_tokens: 1 });
 });
 test('matching rules and actions run in order; renamed fields feed later actions', () => {
@@ -187,4 +185,14 @@ test('non-JSON bodies pass through unchanged', () => {
   }
   const request = { body: { max_output_tokens: 1 }, bodyEncoding: 'text' };
   assert.equal(hook.transformRequest({ targetProviderConfig: { name: 'provider-openai', type: 'openai_responses' }, upstreamRequest: request }).value, request);
+});
+
+test('plugin metadata and runtime registration share one valid release version', () => {
+  const metadata = JSON.parse(fs.readFileSync(path.join(__dirname, 'plugin.json'), 'utf8'));
+  const { manifest } = require('./index.cjs');
+  assert.match(metadata.version, /^\d+\.\d+\.\d+$/);
+  assert.equal(manifest.version, metadata.version);
+  assert.equal(registration().manifest.version, metadata.version);
+  assert.ok(fs.readFileSync(path.join(__dirname, 'README.md'), 'utf8').includes(`当前版本：**${metadata.version}**`));
+  assert.ok(fs.readFileSync(path.join(__dirname, 'CHANGELOG.md'), 'utf8').includes(`## ${metadata.version}`));
 });
