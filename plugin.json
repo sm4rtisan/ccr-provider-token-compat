@@ -1,0 +1,7 @@
+{
+  "id": "provider-token-compat",
+  "name": "供应商输出参数兼容",
+  "module": "index.cjs",
+  "surfaces": ["gateway"],
+  "permissions": ["trusted-code", "core-gateway-plugins"]
+}

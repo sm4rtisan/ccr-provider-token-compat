@@ -1,0 +1,9 @@
+{
+  "rules": [
+    {
+      "provider": "openai",
+      "chatUseMaxCompletionTokens": true,
+      "responsesMinOutputTokens": 16
+    }
+  ]
+}
