@@ -1,5 +1,6 @@
 'use strict';
-const { createHash } = require('node:crypto');
+const { createHash, randomBytes } = require('node:crypto');
+const { evaluateRequest, diagnosticHooks } = require('./diagnostics.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const metadata = require('./plugin.json');
@@ -47,7 +48,7 @@ function readAction(action) {
   throw new Error(`不支持的动作: ${action.type}`);
 }
 function readRules(value) {
-  allowedKeys(value, ['rules'], '配置');
+  allowedKeys(value, ['rules', 'diagnostics'], '配置');
   if (!Array.isArray(value.rules)) throw new Error('配置必须包含 rules 数组');
   return value.rules.map((rule) => {
     if (!record(rule)) throw new Error('规则必须为对象');
@@ -66,56 +67,51 @@ function readRules(value) {
 function setup(ctx) {
   const settings = ctx.pluginConfig && Object.hasOwn(ctx.pluginConfig, 'rules')
     ? ctx.pluginConfig
-    : JSON.parse(fs.readFileSync(path.join(__dirname, 'settings.json'), 'utf8'));
-  const rules = readRules(settings).filter(rule => rule.enabled).map((rule) => {
-    const aliases = rule.match.providers.flatMap(name => {
-      const matches = (ctx.config.Providers || []).filter(provider => provider.name?.toLowerCase() === name.toLowerCase());
-      if (matches.length !== 1) throw new Error(`供应商 ${name} 未找到或名称重复`);
-      const provider = matches[0];
-      return [provider.name.toLowerCase(), runtimeId(provider).toLowerCase()];
-    });
-    return { ...rule, aliases: [...new Set(aliases)] };
-  });
+    : { ...JSON.parse(fs.readFileSync(path.join(__dirname, 'settings.json'), 'utf8')), ...(ctx.pluginConfig || {}) };
+  const providers = (ctx.config.Providers || []).map(provider => ({ name: provider.name, aliases: [provider.name.toLowerCase(), runtimeId(provider).toLowerCase()] }));
+  const rules = compileRules(settings, providers);
+  const options = settings.diagnostics ?? {};
+  allowedKeys(options, ['enabled', 'maxEntries', 'accessKey'], 'diagnostics');
+  if (options.enabled !== undefined && typeof options.enabled !== 'boolean') throw new Error('diagnostics.enabled 必须为布尔值');
+  if (options.maxEntries !== undefined && (!Number.isSafeInteger(options.maxEntries) || options.maxEntries < 1 || options.maxEntries > 1000)) throw new Error('maxEntries 必须在 1 到 1000 之间');
+  if (options.accessKey !== undefined && (typeof options.accessKey !== 'string' || options.accessKey.length < 24 || options.accessKey.length > 256)) throw new Error('diagnostics.accessKey 长度必须在 24 到 256 之间');
+  const enabled = options.enabled !== false;
+  const token = enabled ? (options.accessKey || randomBytes(32).toString('hex')) : '';
   ctx.registerCoreGatewayPlugin({
     key: 'provider-token-compat',
     enabled: true,
     modulePath: __filename,
     manifest,
-    config: { rules },
+    config: { rules, providers, diagnostics: { enabled, maxEntries: options.maxEntries ?? 200, token } },
+  });
+  const appSurface = ctx.config.plugins?.find(item => item.id === ctx.pluginId)?.surfaces?.apps !== false;
+  const appPermission = !ctx.permissions || ctx.permissions.includes('apps');
+  if (enabled && ctx.registerApp && appSurface && appPermission) {
+    const host = ctx.config.gateway?.host;
+    const address = !host || host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host;
+    const authority = address.includes(':') ? `[${address}]` : address;
+    ctx.registerApp({ id: 'diagnostics', name: '请求诊断', url: `http://${authority}:${ctx.config.gateway?.port ?? 3456}/v1/plugins/provider-token-compat#key=${token}` });
+  }
+}
+
+function compileRules(settings, providers) {
+  return readRules(settings).map(rule => {
+    const aliases = rule.enabled ? rule.match.providers.flatMap(name => {
+      const matches = providers.filter(provider => provider.name.toLowerCase() === name.toLowerCase());
+      if (matches.length !== 1) throw new Error(`供应商 ${name} 未找到或名称重复`);
+      return matches[0].aliases;
+    }) : [];
+    return { ...rule, aliases: [...new Set(aliases)] };
   });
 }
 
 function createGatewayPlugin({ plugin }) {
-  const rules = plugin.config.rules;
-  return {
-    providerHooks: [{
-      key: 'provider-token-compat-outbound',
-      transformRequest(input) {
-        const request = input.upstreamRequest;
-        const provider = input.targetProviderConfig;
-        if (!provider || (request.bodyEncoding || 'json') !== 'json' || !request.body || typeof request.body !== 'object' || Array.isArray(request.body)) return { ok: true, value: request };
-        const name = String(provider.name || '').toLowerCase().split('::')[0];
-        const body = request.body;
-        let next = body;
-        for (const rule of rules) {
-          if (!rule.aliases.includes(name) || rule.match.protocol !== provider.type) continue;
-          for (const action of rule.actions) {
-            if (action.type === 'rename' && Object.hasOwn(next, action.from)) {
-              const copy = { ...next };
-              if (!Object.hasOwn(copy, action.to)) copy[action.to] = copy[action.from];
-              delete copy[action.from];
-              next = copy;
-            }
-            if (action.type === 'minimum') {
-              const limit = next[action.field];
-              if (Number.isSafeInteger(limit) && limit > 0 && limit < action.value) next = { ...next, [action.field]: action.value };
-            }
-          }
-        }
-        return { ok: true, value: next === body ? request : { ...request, body: next } };
-      },
-    }],
-  };
+  return diagnosticHooks(plugin.config, {
+    evaluateRequest,
+    compileRules,
+    version: metadata.version,
+    page: () => fs.readFileSync(path.join(__dirname, 'diagnostics.html'), 'utf8'),
+  });
 }
 
 module.exports = { setup, createGatewayPlugin, manifest };

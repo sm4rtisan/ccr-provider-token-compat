@@ -116,6 +116,32 @@ test('real ai-gateway: Anthropic requests reach mock providers through the insta
       }
     }
     assert.equal(captured.length, 8);
+    const routeBase = origin + '/v1/plugins/provider-token-compat';
+    const diagnosticHeaders = { 'x-diagnostics-key': registered.config.diagnostics.token, 'content-type': 'application/json' };
+    const denied = await fetch(routeBase + '/records');
+    assert.equal(denied.status, 401);
+    const page = await fetch(routeBase);
+    assert.equal(page.status, 200);
+    assert.ok((await page.text()).includes('规则试跑'));
+    const logsResponse = await fetch(routeBase + '/records', { headers: diagnosticHeaders });
+    assert.equal(logsResponse.status, 200, await logsResponse.clone().text());
+    const logs = await logsResponse.json();
+    assert.equal(logs.entries.length, 8);
+    assert.ok(logs.entries.some(entry => entry.changed));
+    assert.ok(logs.entries.some(entry => entry.traces.some(trace => trace.reason === '供应商不匹配')));
+    assert.ok(logs.entries.some(entry => entry.status === 200), JSON.stringify(logs.entries));
+    assert.ok(!JSON.stringify(logs).includes('test-only'));
+    const trial = await fetch(routeBase + '/trial', { method: 'POST', headers: diagnosticHeaders, body: JSON.stringify({ provider: 'openai', protocol: 'openai_responses', body: { max_output_tokens: 1, messages: [{ role: 'user', content: 'NEVER_STORE_PRIVATE' }] } }) });
+    assert.equal(trial.status, 200, await trial.clone().text());
+    const trialResult = await trial.json();
+    assert.equal(trialResult.changed, true);
+    assert.ok(!JSON.stringify(trialResult).includes('NEVER_STORE_PRIVATE'));
+    assert.equal(captured.length, 8, 'trial must not call the supplier');
+    const invalid = await fetch(routeBase + '/trial', { method: 'POST', headers: diagnosticHeaders, body: JSON.stringify({ provider: 'openai', protocol: 'openai_responses', body: {}, rules: [{ wrong: true }] }) });
+    assert.equal(invalid.status, 400);
+    const clear = await fetch(routeBase + '/records', { method: 'DELETE', headers: { 'x-diagnostics-key': registered.config.diagnostics.token } });
+    assert.equal(clear.status, 200);
+    assert.equal((await (await fetch(routeBase + '/records', { headers: diagnosticHeaders })).json()).entries.length, 0);
   } finally {
     if (child && child.exitCode === null) {
       const exited = once(child, 'exit');
@@ -195,4 +221,72 @@ test('plugin metadata and runtime registration share one valid release version',
   assert.equal(registration().manifest.version, metadata.version);
   assert.ok(fs.readFileSync(path.join(__dirname, 'README.md'), 'utf8').includes(`当前版本：**${metadata.version}**`));
   assert.ok(fs.readFileSync(path.join(__dirname, 'CHANGELOG.md'), 'utf8').includes(`## ${metadata.version}`));
+});
+
+function diagnosticRuntime(settings) {
+  const registered = registration(undefined, settings);
+  return { runtime: createGatewayPlugin({ plugin: registered }), registered };
+}
+function routeCall(runtime, suffix, method, body, token) {
+  const route = runtime.httpRoutes.find(item => item.path.endsWith(suffix) && item.method === method);
+  const reply = { status: 200, header() { return this; }, code(value) { this.status = value; return this; }, send(value) { this.data = value; return this; } };
+  const result = route.handler({ request: { headers: { 'x-diagnostics-key': token }, body }, reply });
+  return { status: reply.status, data: reply.data ?? result };
+}
+test('diagnostic records are bounded, redact text, correlate outcomes and clear safely', () => {
+  const rules = [{ match: { providers: ['openai'], protocol: 'openai_chat_completions' }, actions: [{ type: 'rename', from: 'secret', to: 'renamed' }] }];
+  const { runtime, registered } = diagnosticRuntime({ rules, diagnostics: { maxEntries: 2, accessKey: 'diagnostic-test-key-with-32-characters' } });
+  const hook = runtime.providerHooks[0];
+  for (let i = 0; i < 3; i++) hook.transformRequest({ request: { id: `request-${i}`, headers: { authorization: 'DO_NOT_RECORD_AUTH' } }, targetProviderConfig: { name: 'provider-openai::openai_chat_completions', type: 'openai_chat_completions' }, upstreamRequest: { body: { secret: 'DO_NOT_RECORD_SECRET', messages: ['DO_NOT_RECORD_MESSAGE'] } } });
+  const token = registered.config.diagnostics.token;
+  let result = routeCall(runtime, '/records', 'GET', undefined, token);
+  assert.equal(result.data.entries.length, 2);
+  assert.ok(!JSON.stringify(result).includes('DO_NOT_RECORD'));
+  runtime.responseHooks[0].transformResponse({ request: { id: 'request-2' }, targetProviderConfig: { name: 'provider-openai::openai_chat_completions' }, statusCode: 403 });
+  result = routeCall(runtime, '/records', 'GET', undefined, token);
+  assert.equal(result.data.entries[0].status, 403);
+  assert.equal(result.data.entries[0].outcome, '供应商拒绝了请求');
+  assert.equal(routeCall(runtime, '/records', 'GET', undefined, 'wrong').status, 401);
+  routeCall(runtime, '/records', 'DELETE', undefined, token);
+  assert.equal(routeCall(runtime, '/records', 'GET', undefined, token).data.entries.length, 0);
+});
+test('trial explains disabled, mismatched and no-op actions without recording or persisting temporary rules', () => {
+  const { runtime, registered } = diagnosticRuntime();
+  const token = registered.config.diagnostics.token;
+  const body = { provider: 'openai', protocol: 'openai_responses', body: { max_output_tokens: 1 }, rules: [{ enabled: false, match: { providers: ['openai'], protocol: 'openai_responses' }, actions: [{ type: 'minimum', field: 'max_output_tokens', value: 64 }] }] };
+  const result = routeCall(runtime, '/trial', 'POST', body, token);
+  assert.equal(result.data.traces[0].reason, '规则已关闭');
+  assert.equal(result.data.changed, false);
+  const real = routeCall(runtime, '/trial', 'POST', { ...body, rules: undefined }, token);
+  assert.equal(real.data.changed, true);
+  assert.equal(real.data.traces[1].actions[0].after, 16);
+  assert.equal(routeCall(runtime, '/records', 'GET', undefined, token).data.entries.length, 0);
+  assert.equal(routeCall(runtime, '/trial', 'POST', { ...body, protocol: 'bad' }, token).status, 400);
+});
+test('diagnostics can be disabled and invalid access settings are rejected', () => {
+  const { runtime } = diagnosticRuntime({ rules: [], diagnostics: { enabled: false } });
+  assert.deepEqual(runtime.httpRoutes, []);
+  assert.deepEqual(runtime.responseHooks, []);
+  for (const diagnostics of [{ maxEntries: 0 }, { maxEntries: 1001 }, { accessKey: 'short' }, { enabled: 'yes' }]) assert.throws(() => registration(undefined, { rules: [], diagnostics }));
+});
+
+test('stream observation preserves the response and records only the observed HTTP status', () => {
+  const { runtime, registered } = diagnosticRuntime();
+  const input = { request: { id: 'stream-request' }, targetProviderConfig: { name: 'provider-openai::openai_responses', type: 'openai_responses' }, upstreamRequest: { body: { max_output_tokens: 1 } } };
+  runtime.providerHooks[0].transformRequest(input);
+  const response = new Response('data: private-output\n\n', { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  assert.equal(runtime.streamHooks[0].transformResponse({ ...input, upstreamResponse: response }), response);
+  assert.equal(response.bodyUsed, false);
+  const logs = routeCall(runtime, '/records', 'GET', undefined, registered.config.diagnostics.token).data;
+  assert.equal(logs.entries[0].status, 200);
+  assert.equal(logs.entries[0].outcome, '已收到响应');
+  assert.ok(!JSON.stringify(logs).includes('private-output'));
+});
+
+test('desktop app registration uses diagnostics access and respects disabled app permissions', () => {
+  const apps = [];
+  setup({ config: { gateway: { host: '0.0.0.0', port: 3456 }, Providers: [{ id: 'openai', name: 'openai' }] }, registerCoreGatewayPlugin() {}, registerApp(app) { apps.push(app); }, permissions: ['apps'] });
+  assert.equal(apps.length, 1);
+  assert.ok(apps[0].url.startsWith('http://127.0.0.1:3456/v1/plugins/provider-token-compat#key='));
+  setup({ config: { Providers: [{ id: 'openai', name: 'openai' }] }, registerCoreGatewayPlugin() {}, registerApp() { throw new Error('should not register'); }, permissions: ['core-gateway-plugins'] });
 });

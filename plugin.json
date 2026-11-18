@@ -3,11 +3,20 @@
   "name": "供应商输出参数兼容",
   "module": "index.cjs",
   "surfaces": [
-    "gateway"
+    "gateway",
+    "apps"
   ],
   "permissions": [
     "trusted-code",
-    "core-gateway-plugins"
+    "core-gateway-plugins",
+    "apps"
   ],
-  "version": "2.0.0"
+  "version": "2.1.0",
+  "apps": [
+    {
+      "id": "diagnostics",
+      "name": "请求诊断",
+      "url": "http://127.0.0.1:3456/v1/plugins/provider-token-compat"
+    }
+  ]
 }
