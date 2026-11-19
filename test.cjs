@@ -342,3 +342,17 @@ test('comparison ignores omitted undefined fields and treats object key order as
   assert.ok(!result.rows.some(row => row.name === 'instructions'));
   assert.equal(result.rows.find(row => row.name === 'metadata').conversion, 'same');
 });
+
+test('comparison displays model names across routing while keeping other text hidden', () => {
+  const compare = require('./comparison.cjs').createComparison();
+  const ingress = compare.snapshot({ model: 'openai/gpt-5.6-luna', secret: 'PRIVATE_SECRET' });
+  const outbound = compare.snapshot({ model: 'gpt-5.6-luna', secret: 'PRIVATE_SECRET' });
+  const result = compare.compare(ingress, outbound, outbound);
+  assert.deepEqual(result.rows.find(row => row.name === 'model').values, ['openai/gpt-5.6-luna', 'gpt-5.6-luna', 'gpt-5.6-luna']);
+  assert.equal(result.rows.find(row => row.name === 'model').conversion, 'changed');
+  assert.ok(!JSON.stringify(result).includes('PRIVATE_SECRET'));
+  const long = compare.snapshot({ model: 'm'.repeat(300) });
+  assert.ok(long.fields[0].display.endsWith('…（已截断）'));
+  assert.ok(long.fields[0].display.length < 280);
+  assert.equal(compare.snapshot({ model: { secret: 'PRIVATE_SECRET' } }).fields[0].display, '对象，共 1 个字段，内容已隐藏');
+});

@@ -15,11 +15,12 @@ function createComparison() {
       let display = '内容已隐藏';
       if (safeNumbers.has(name) && typeof value === 'number' && Number.isFinite(value)) display = String(value);
       else if (safeBooleans.has(name) && typeof value === 'boolean') display = String(value);
+      else if (name === 'model' && typeof value === 'string') display = value.slice(0, 256).replace(/[\u0000-\u001f\u007f]/g, '�') + (value.length > 256 ? '…（已截断）' : '');
       else if (Array.isArray(value)) display = `数组，共 ${value.length} 项，内容已隐藏`;
       else if (value && typeof value === 'object') display = `对象，共 ${Object.keys(value).length} 个字段，内容已隐藏`;
       else if (value === null) display = 'null';
       let signature = null;
-      // Never retain raw field values. Large fields are deliberately not compared.
+      // Never retain private field values. Large fields are deliberately not compared.
       try {
         const text = JSON.stringify(value);
         if (typeof text === 'string' && text.length <= MAX_HASH_BYTES && Buffer.byteLength(text) <= MAX_HASH_BYTES) signature = createHmac('sha256', secret).update(JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item)).digest('hex');
