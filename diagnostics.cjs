@@ -1,5 +1,6 @@
 'use strict';
 const { randomUUID, timingSafeEqual } = require('node:crypto');
+const { createComparison } = require('./comparison.cjs');
 const BASE = '/v1/plugins/provider-token-compat';
 const safeNumbers = new Set(['max_tokens', 'max_completion_tokens', 'max_output_tokens', 'temperature', 'top_p', 'top_k']);
 function visible(field, value, exists) {
@@ -62,6 +63,8 @@ function diagnosticHooks(config, api) {
   const options = config.diagnostics || { enabled: false };
   const entries = [];
   const pending = new Map();
+  const incoming = new Map();
+  const comparison = createComparison();
   function key(input) { return `${input.request?.id || ''}\n${input.targetProviderConfig?.name || ''}`; }
   function observe(input, status) {
     if (!options.enabled || !input.request?.id) return;
@@ -88,6 +91,13 @@ function diagnosticHooks(config, api) {
     },
   });
   return {
+    requestHooks: options.enabled ? [{ key: 'token-comparison-ingress', beforeAuth(input) {
+      if (!input.request?.id) return;
+      const now = Date.now();
+      for (const [id, value] of incoming) if (now - value.time > 300000) incoming.delete(id);
+      if (!incoming.has(input.request.id)) incoming.set(input.request.id, { time: now, snapshot: comparison.snapshot(input.requestBody ?? input.request.body) });
+      while (incoming.size > options.maxEntries) incoming.delete(incoming.keys().next().value);
+    } }] : [],
     providerHooks: [{
       key: 'provider-token-compat-outbound',
       transformRequest(input) {
@@ -95,7 +105,7 @@ function diagnosticHooks(config, api) {
         if (options.enabled) {
           const providerName = String(input.targetProviderConfig?.name || '').split('::')[0];
           const publicProvider = config.providers?.find(item => item.aliases.includes(providerName.toLowerCase()));
-          const entry = { id: randomUUID(), requestId: String(input.request?.id || '').slice(0, 120), startedMs: Date.now(), time: new Date().toISOString(), provider: publicProvider?.name || providerName, protocol: input.targetProviderConfig?.type || '未知', changed: evaluated.changed, traces: evaluated.traces, outcome: '尚未观察到响应', status: null };
+          const entry = { id: randomUUID(), requestId: String(input.request?.id || '').slice(0, 120), startedMs: Date.now(), time: new Date().toISOString(), provider: publicProvider?.name || providerName, protocol: input.targetProviderConfig?.type || '未知', changed: evaluated.changed, traces: evaluated.traces, outcome: '尚未观察到响应', status: null, comparison: comparison.compare(incoming.get(input.request?.id)?.snapshot ?? null, comparison.snapshot(input.upstreamRequest.body), comparison.snapshot(evaluated.request.body)) };
           entries.unshift(entry);
           if (input.request?.id) pending.set(key(input), entry);
           while (entries.length > options.maxEntries) {
@@ -111,7 +121,7 @@ function diagnosticHooks(config, api) {
     httpRoutes: !options.enabled ? [] : [
       route('GET', '', ({ reply }) => reply.header('content-security-policy', "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'self'").type('text/html; charset=utf-8').send(api.page())),
       route('GET', '/records', () => ({ version: api.version, entries, providers: config.providers.map(provider => provider.name), rules: config.rules.map(({ aliases, ...rule }) => rule), maxEntries: options.maxEntries })),
-      route('DELETE', '/records', () => { entries.length = 0; pending.clear(); return { ok: true }; }),
+      route('DELETE', '/records', () => { entries.length = 0; pending.clear(); incoming.clear(); return { ok: true }; }),
       route('POST', '/trial', ({ request }) => {
         const value = request.body;
         if (!value || typeof value !== 'object' || Array.isArray(value) || !value.body || typeof value.body !== 'object' || Array.isArray(value.body)) throw new Error('body 必须为 JSON 对象');
@@ -121,7 +131,7 @@ function diagnosticHooks(config, api) {
         if (!provider) throw new Error('请选择已配置的供应商');
         const rules = value.rules === undefined ? config.rules : api.compileRules({ rules: value.rules }, config.providers);
         const evaluated = api.evaluateRequest({ body: value.body, bodyEncoding: 'json' }, { name: provider.aliases[0], type: value.protocol }, rules);
-        return { changed: evaluated.changed, traces: evaluated.traces, note: '仅试跑规则，未调用供应商；结果不写入处理记录。' };
+        return { changed: evaluated.changed, traces: evaluated.traces, comparison: comparison.compare(null, comparison.snapshot(value.body), comparison.snapshot(evaluated.request.body)), note: '仅试跑规则，未调用供应商；结果不写入处理记录。' };
       }),
     ],
   };

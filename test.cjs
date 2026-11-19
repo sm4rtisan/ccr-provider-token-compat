@@ -91,7 +91,9 @@ test('real ai-gateway: Anthropic requests reach mock providers through the insta
     ]);
     assert.ok(aliases.includes('provider-openai'));
     const configPath = path.join(root, 'gateway.json');
-    fs.writeFileSync(configPath, JSON.stringify({ host: '127.0.0.1', port, logging: { enabled: false }, providers, plugins: [registered] }));
+    const rewritePath = path.join(root, 'rewrite-before-routing.cjs');
+    fs.writeFileSync(rewritePath, `exports.createGatewayPlugin = () => ({ requestTransforms: [{ key: 'test-rewrite', stage: 'beforeRouting', transform(input) { if (input.request.headers['x-test-rewrite'] === 'yes') return { requestBody: { ...input.requestBody, max_tokens: 7 } }; } }] });`);
+    fs.writeFileSync(configPath, JSON.stringify({ host: '127.0.0.1', port, logging: { enabled: false }, providers, plugins: [registered, { key: 'test-rewrite', modulePath: rewritePath }] }));
     child = spawn(process.execPath, [gatewayEntry], { cwd: root, env: { ...process.env, GATEWAY_CONFIG_PATH: configPath }, stdio: ['ignore', 'pipe', 'pipe'] });
     child.stdout.on('data', data => { output = (output + data).slice(-6000); });
     child.stderr.on('data', data => { output = (output + data).slice(-6000); });
@@ -139,6 +141,17 @@ test('real ai-gateway: Anthropic requests reach mock providers through the insta
     assert.equal(captured.length, 8, 'trial must not call the supplier');
     const invalid = await fetch(routeBase + '/trial', { method: 'POST', headers: diagnosticHeaders, body: JSON.stringify({ provider: 'openai', protocol: 'openai_responses', body: {}, rules: [{ wrong: true }] }) });
     assert.equal(invalid.status, 400);
+    const rewriteResponse = await fetch(origin + '/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-target-provider': 'provider-openai::openai_responses::cred:key-1', 'x-test-rewrite': 'yes' }, body: JSON.stringify({ model: 'any-model', max_tokens: 1, messages: [{ role: 'user', content: 'DO_NOT_CAPTURE_ORIGINAL_TEXT' }] }) });
+    assert.equal(rewriteResponse.status, 200, await rewriteResponse.text());
+    const comparedLogs = await (await fetch(routeBase + '/records', { headers: diagnosticHeaders })).json();
+    const compared = comparedLogs.entries[0].comparison;
+    assert.equal(compared.ingressAvailable, true);
+    assert.equal(compared.stages.length, 3);
+    assert.equal(compared.rows.find(row => row.name === 'max_tokens').values[0], '1', JSON.stringify(compared));
+    assert.deepEqual(compared.rows.find(row => row.name === 'max_output_tokens').values, ['（不存在）', '7', '16']);
+    assert.equal(compared.rows.find(row => row.name === 'max_output_tokens').conversion, 'added');
+    assert.equal(compared.rows.find(row => row.name === 'max_output_tokens').extension, 'changed');
+    assert.ok(!JSON.stringify(comparedLogs).includes('DO_NOT_CAPTURE_ORIGINAL_TEXT'));
     const clear = await fetch(routeBase + '/records', { method: 'DELETE', headers: { 'x-diagnostics-key': registered.config.diagnostics.token } });
     assert.equal(clear.status, 200);
     assert.equal((await (await fetch(routeBase + '/records', { headers: diagnosticHeaders })).json()).entries.length, 0);
@@ -289,4 +302,43 @@ test('desktop app registration uses diagnostics access and respects disabled app
   assert.equal(apps.length, 1);
   assert.ok(apps[0].url.startsWith('http://127.0.0.1:3456/v1/plugins/provider-token-compat#key='));
   setup({ config: { Providers: [{ id: 'openai', name: 'openai' }] }, registerCoreGatewayPlugin() {}, registerApp() { throw new Error('should not register'); }, permissions: ['core-gateway-plugins'] });
+});
+
+test('three-stage comparison hides private values but detects changes and additions/removals', () => {
+  const { createComparison } = require('./comparison.cjs');
+  const compare = createComparison();
+  const input = compare.snapshot({ max_tokens: 1, messages: ['PRIVATE_A'], metadata: { secret: 'TOKEN_A' }, temperature: 0.5 });
+  const before = compare.snapshot({ max_output_tokens: 7, input: ['PRIVATE_A'], metadata: { secret: 'TOKEN_B' }, temperature: 0.5 });
+  const after = compare.snapshot({ max_output_tokens: 16, input: ['PRIVATE_A'], metadata: { secret: 'TOKEN_B' }, temperature: 0.5 });
+  const result = compare.compare(input, before, after);
+  assert.deepEqual(result.rows.find(row => row.name === 'max_output_tokens').values, ['（不存在）', '7', '16']);
+  assert.equal(result.rows.find(row => row.name === 'max_tokens').conversion, 'removed');
+  assert.equal(result.rows.find(row => row.name === 'metadata').conversion, 'changed');
+  assert.equal(result.rows.find(row => row.name === 'temperature').extension, 'same');
+  assert.ok(!JSON.stringify(result).includes('PRIVATE_A'));
+  assert.ok(!JSON.stringify(result).includes('TOKEN_A'));
+  assert.ok(!JSON.stringify(result).includes('TOKEN_B'));
+  assert.ok(!JSON.stringify(result).includes('signature'));
+});
+test('comparison never invents an original request; truncation and oversized values remain unknown', () => {
+  const { createComparison } = require('./comparison.cjs');
+  const compare = createComparison();
+  const sample = compare.snapshot({ max_output_tokens: 1 });
+  assert.equal(compare.compare(null, sample, sample).rows[0].conversion, 'unavailable');
+  const large = compare.snapshot({ input: 'x'.repeat(300000) });
+  assert.equal(compare.compare(large, large, large).rows[0].conversion, 'unknown');
+  const full = compare.snapshot(Object.fromEntries(Array.from({length: 70}, (_, i) => ['field_' + i, i])));
+  const added = compare.snapshot({ beyond: true });
+  assert.equal(compare.compare(full, added, added).rows.find(row => row.name === 'beyond').conversion, 'unknown');
+  const reordered = compare.compare(compare.snapshot({ metadata: { a: 1, b: 2 } }), compare.snapshot({ metadata: { b: 2, a: 1 } }), null);
+  assert.equal(reordered.rows[0].conversion, 'same');
+});
+
+test('comparison ignores omitted undefined fields and treats object key order as unchanged', () => {
+  const compare = require('./comparison.cjs').createComparison();
+  const left = compare.snapshot({ max_tokens: 1, instructions: undefined, metadata: { a: 1, b: 2 } });
+  const right = compare.snapshot({ max_tokens: 1, metadata: { b: 2, a: 1 } });
+  const result = compare.compare(left, right, right);
+  assert.ok(!result.rows.some(row => row.name === 'instructions'));
+  assert.equal(result.rows.find(row => row.name === 'metadata').conversion, 'same');
 });
