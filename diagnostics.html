@@ -18,6 +18,10 @@ main>header,main>#access,main>#notice{flex-shrink:0}
 .rule-card span{display:block}.rule-card button{width:100%;text-align:left;padding:0;border:0;background:none}
 .rule-card:has(button[aria-pressed=true]){border-color:#72e3c8}
 .compare-table tr.rule-highlight>th{box-shadow:inset 3px 0 #72e3c8;background:#16352f;color:#a5f1dc}
+.diff-panel{margin:8px 0;border:1px solid #344247;border-radius:8px;padding:8px 12px}
+.diff-panel>summary{font-weight:650}.diff-list{list-style:none;margin:8px 0 0;padding:0}
+.diff-list li{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 14px;padding:7px 8px;overflow-wrap:anywhere}
+.diff-list li+li{border-top:1px solid #344247}.diff-list .rule-highlight{background:#16352f;color:#a5f1dc;border-radius:5px}
 </style></head><body><main>
 <header><div><h1>请求诊断 <span id="version" class="muted"></span></h1><div class="muted">看清扩展命中了什么规则，调整了什么。</div></div><span class="tag">仅诊断本扩展</span></header>
 <section id="access" class="panel"><h2>连接诊断</h2><div class="note">在已登录 CCR 的同一标签页打开时会自动连接。也可以填写独立诊断凭证。</div><div class="row"><input id="key" type="password" minlength="6" maxlength="256" autocomplete="off" aria-label="诊断访问凭证" placeholder="诊断访问凭证"><button id="connect" class="primary">连接</button></div></section>
@@ -79,20 +83,18 @@ function traces(container,items,selectFields){
 }
 function parameterComparison(container,data,trial=false){
  const outer=element('section','', 'comparison');
- outer.append(element('h2','请求参数对比'));
+ outer.append(element('h2','本次变更'));
  const changes=new Set(['added','removed','changed']);
  const changed=row=>changes.has(row.conversion)||changes.has(row.extension);
  const uncertain=row=>[row.conversion,row.extension].some(value=>value==='unknown'||(!trial&&value==='unavailable'));
  const priority=row=>changed(row)?0:uncertain(row)?1:2;
  const rows=[...data.rows].sort((a,b)=>priority(a)-priority(b));
- const count=rows.filter(changed).length;
- outer.append(element('p',`${count} / ${rows.length} 个字段有变化`,'note'));
  if(trial||!data.ingressAvailable) outer.append(element('p',trial?'试跑只比较示例与扩展结果。':'未捕获 CCR 收到时的内容。','note'));
  const label=element('label','');
  const toggle=document.createElement('input');
  toggle.type='checkbox';
  label.append(toggle,document.createTextNode('显示未变化的字段'));
- outer.append(label);
+
  const table=element('table','','compare-table');
  const head=table.createTHead().insertRow();
  for(const title of ['字段',...data.stages.map(stage=>stage.label)]){
@@ -107,6 +109,29 @@ function parameterComparison(container,data,trial=false){
  const selection=element('p','','note');
  selection.setAttribute('role','status');
  selection.hidden=true;
+ const changeItems=[];
+ function changePanel(title,key,before,after,open){
+   const panel=element('details','','diff-panel');
+   const entries=rows.filter(row=>changes.has(row[key]));
+   panel.open=open;
+   panel.append(element('summary',`${title} · ${entries.length} 个字段`));
+   const list=element('ul','','diff-list');
+   for(const row of entries){
+     const item=element('li','');
+     const status=row[key];
+     const value=status==='added'?row.values[after]:status==='removed'?row.values[before]:`${row.values[before]} → ${row.values[after]}`;
+     item.append(element('code',row.name),element('span',value),element('span',wording[status],'note'));
+     list.append(item);
+     changeItems.push({name:row.name,item,panel});
+   }
+   panel.append(entries.length?list:element('p','没有确认的字段变化','note'));
+   outer.append(panel);
+ }
+ changePanel('扩展改动','extension',data.stages.length-2,data.stages.length-1,true);
+ if(!trial&&data.ingressAvailable)changePanel('扩展处理前的变化','conversion',0,1,false);
+ const full=element('details','','diff-panel');
+ full.append(element('summary','查看完整对比'),label,table,empty);
+ outer.append(full,selection);
  function draw(){
    body.replaceChildren();
    const shown=rows.filter(row=>toggle.checked||changed(row)||uncertain(row)||selectedFields.has(row.name));
@@ -131,7 +156,7 @@ function parameterComparison(container,data,trial=false){
  }
  toggle.onchange=draw;
  draw();
- outer.append(selection,table,empty);
+
  if(data.stages.some(stage=>stage.truncated)) outer.append(element('p','每栏最多采集 64 个顶层字段。','note'));
  outer.append(element('p','扩展处理后显示的是本扩展的结果，CCR 后续仍可能调整请求。','note'));
  container.append(outer);
@@ -142,7 +167,17 @@ function parameterComparison(container,data,trial=false){
      ?'已标出所选规则涉及的字段。'
      :'本次参数对比未采集到这条规则涉及的字段。';
    draw();
-   if(fields.length)(body.querySelector('.rule-highlight')||selection).scrollIntoView({block:'nearest'});
+   for(const entry of changeItems)entry.item.classList.toggle('rule-highlight',selectedFields.has(entry.name));
+   if(!fields.length)return;
+   const target=changeItems.find(entry=>selectedFields.has(entry.name));
+   if(target){
+     target.panel.open=true;
+     target.item.scrollIntoView({block:'nearest'});
+     return;
+   }
+   const row=body.querySelector('.rule-highlight');
+   if(row)full.open=true;
+   (row||selection).scrollIntoView({block:'nearest'});
  };
 }
 function render(){const q=$('search').value.trim().toLowerCase();const shown=records.filter(record=>(record.requestId+' '+record.provider).toLowerCase().includes(q));const root=$('records');root.replaceChildren();root.className='';if(!shown.length){root.append(element('div',q?'没有匹配的记录':'暂无记录，发起一次实际对话后点击刷新','empty'));return;}for(const record of shown){const block=element('details','', 'record');const title=element('summary',`${new Date(record.time).toLocaleTimeString()} · ${record.provider} · ${record.protocol} · ${record.changed?'已调整':'未调整'}`);block.append(title,element('div',`请求编号：${record.requestId||'未提供'} · ${record.outcome}${record.status?' · HTTP '+record.status:''}`,'muted'));const rules=element('div','');block.append(rules);const selectFields=record.comparison&&parameterComparison(block,record.comparison);traces(rules,record.traces,selectFields);root.append(block);}}
