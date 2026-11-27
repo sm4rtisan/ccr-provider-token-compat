@@ -19,7 +19,8 @@ function evaluateRequest(request, provider, rules) {
     if (!rule.enabled) trace.reason = '规则已关闭';
     else if (!valid) trace.reason = '不是可处理的 JSON 请求';
     else if (!rule.aliases.includes(name)) trace.reason = '供应商不匹配';
-    else if (rule.match.protocol !== provider.type) trace.reason = '协议不匹配';
+    else if (rule.match.protocol && rule.match.protocol !== provider.type) trace.reason = '协议不匹配';
+    else if (rule.match.models && !rule.match.models.includes(body.model)) trace.reason = '模型不匹配';
     else {
       trace.matched = true;
       trace.reason = '条件匹配';
@@ -38,6 +39,16 @@ function evaluateRequest(request, provider, rules) {
             item.after = visible(action.to, next[action.to], true);
             item.changed = true;
             item.reason = targetExists ? '保留已有目标值，删除旧字段' : '已改名，保留原值';
+          }
+        } else if (action.type === 'delete') {
+          if (!Object.hasOwn(next, action.field)) item.reason = '字段不存在，跳过';
+          else {
+            item.before = visible(action.field, next[action.field], true);
+            next = { ...next };
+            delete next[action.field];
+            item.after = '（不存在）';
+            item.changed = true;
+            item.reason = '已移除字段';
           }
         } else {
           const value = next[action.field];
@@ -126,7 +137,7 @@ function diagnosticHooks(config, api) {
         const value = request.body;
         if (!value || typeof value !== 'object' || Array.isArray(value) || !value.body || typeof value.body !== 'object' || Array.isArray(value.body)) throw new Error('body 必须为 JSON 对象');
         if (JSON.stringify(value).length > 262144) throw new Error('试跑内容不能超过 256 KB');
-        if (!['openai_chat_completions', 'openai_responses', 'anthropic_messages', 'gemini_generate_content', 'gemini_interactions'].includes(value.protocol)) throw new Error('请选择有效的实际供应商协议');
+        if (!['openai_chat_completions', 'openai_responses', 'anthropic_messages', 'gemini_generate_content', 'gemini_interactions', 'openai_image_generations'].includes(value.protocol)) throw new Error('请选择有效的实际供应商协议');
         const provider = config.providers.find(item => item.name === value.provider);
         if (!provider) throw new Error('请选择已配置的供应商');
         const rules = value.rules === undefined ? config.rules : api.compileRules({ rules: value.rules }, config.providers);

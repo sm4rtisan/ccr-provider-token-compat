@@ -202,7 +202,7 @@ test('rejects unsafe paths, typos, mixed formats, unsupported actions and invali
   const action = { type: 'minimum', field: 'max_output_tokens', value: 16 };
   const invalid = [
     rule('typo', [action]), rule('openai_responses', []),
-    rule('openai_responses', [{ type: 'delete', field: 'metadata' }]),
+    rule('openai_responses', [{ type: 'delete', field: '__proto__' }]),
     rule('openai_responses', [{ ...action, field: '__proto__' }]),
     rule('openai_responses', [{ ...action, field: 'metadata.user' }]),
     rule('openai_responses', [{ ...action, value: 0 }]),

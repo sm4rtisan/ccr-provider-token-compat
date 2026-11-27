@@ -29,7 +29,7 @@ function fieldName(value) {
   if (typeof value !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(value) || ['__proto__', 'prototype', 'constructor'].includes(value)) throw new Error('动作字段必须为安全的顶层字段名称');
   return value;
 }
-const protocols = ['openai_chat_completions', 'openai_responses', 'anthropic_messages', 'gemini_generate_content', 'gemini_interactions'];
+const protocols = ['openai_chat_completions', 'openai_responses', 'anthropic_messages', 'gemini_generate_content', 'gemini_interactions', 'openai_image_generations'];
 function readAction(action) {
   if (!record(action)) throw new Error('动作必须为对象');
   if (action.type === 'rename') {
@@ -38,6 +38,10 @@ function readAction(action) {
     if (from === to) throw new Error('改名前后的字段不能相同');
     if (action.ifTargetExists !== undefined && action.ifTargetExists !== 'keep') throw new Error('ifTargetExists 目前只支持 keep');
     return { type: 'rename', from, to, ifTargetExists: 'keep' };
+  }
+  if (action.type === 'delete') {
+    allowedKeys(action, ['type', 'field'], 'delete');
+    return { type: 'delete', field: fieldName(action.field) };
   }
   if (action.type === 'minimum') {
     allowedKeys(action, ['type', 'field', 'value', 'ifMissing'], 'minimum');
@@ -56,11 +60,16 @@ function readRules(value) {
     if (rule.name !== undefined && typeof rule.name !== 'string') throw new Error('name 必须为字符串');
     const common = { name: rule.name, enabled: rule.enabled !== false };
     allowedKeys(rule, ['name', 'enabled', 'match', 'actions'], '规则');
-    allowedKeys(rule.match, ['providers', 'protocol'], 'match');
+    allowedKeys(rule.match, ['providers', 'protocol', 'models'], 'match');
     if (!Array.isArray(rule.match.providers) || !rule.match.providers.length || rule.match.providers.some(name => typeof name !== 'string' || !name.trim())) throw new Error('match.providers 必须为非空供应商名称数组');
-    if (!protocols.includes(rule.match.protocol)) throw new Error('match.protocol 必须为支持的实际供应商协议');
+    const { models, protocol } = rule.match;
+    if (models !== undefined && (!Array.isArray(models) || !models.length ||
+      models.some(model => typeof model !== 'string' || !model.trim()))) {
+      throw new Error('match.models 必须为非空模型名称数组');
+    }
+    if ((protocol !== undefined || models === undefined) && !protocols.includes(protocol)) throw new Error('match.protocol 必须为支持的实际供应商协议');
     if (!Array.isArray(rule.actions) || !rule.actions.length) throw new Error('actions 不能为空');
-    return { ...common, match: { providers: rule.match.providers.map(name => name.trim()), protocol: rule.match.protocol }, actions: rule.actions.map(readAction) };
+    return { ...common, match: { providers: rule.match.providers.map(name => name.trim()), protocol, ...(models && { models: models.map(model => model.trim()) }) }, actions: rule.actions.map(readAction) };
   });
 }
 

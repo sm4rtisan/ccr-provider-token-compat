@@ -1,6 +1,6 @@
 # 供应商输出参数兼容扩展
 
-当前版本：**2.2.1**。更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**2.3.0**。更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 适用于已核对的 CCR 3.1.5 和 ai-gateway 1.0.21。独立扩展，无第三方依赖，不修改 CCR 源码。
 
@@ -87,18 +87,19 @@ volumes:
 - `match.protocol`：实际发给供应商的协议，不是客户端入口协议。支持 openai_chat_completions、openai_responses、anthropic_messages、gemini_generate_content、gemini_interactions。
 - `actions`：动作数组，按顺序执行；所有符合条件的规则也按配置顺序执行，不是仅处理第一条。
 
-同一供应商下所有模型都适用对应规则。不要给仍使用旧 Chat 参数的供应商开启改名规则；有混合需求时，可在 CCR 中拆成两个供应商配置。本版不支持按模型筛选，也不支持通配符和嵌套字段。
+同一供应商下所有模型都适用对应规则。不要给仍使用旧 Chat 参数的供应商开启改名规则；有混合需求时，可在 CCR 中拆成两个供应商配置。可用 `match.models` 按发送给供应商的模型名称精确匹配。指定模型时可省略协议，匹配该供应商下此模型的所有协议。不支持通配符和嵌套字段。
 
-### 两种处理动作
+### 处理动作
 
 | 动作 | 行为 |
 | --- | --- |
 | rename | 将 from 字段改名为 to，保留原值；原字段不存在时跳过 |
+| delete | 删除指定的顶层 field，字段不存在时跳过 |
 | minimum | 将 field 中小于 value 的正整数提高到 value；其余值保持原样 |
 
 rename 的 `ifTargetExists` 目前仅支持 `keep`（默认）：目标字段已存在时保留目标值，同时删除旧字段。minimum 的 `ifMissing` 目前仅支持 `skip`（默认）：字段缺失时不会创建它。0、负数、小数及字符串不属于有效的正整数上限，不会被自动修正。
 
-字段只支持顶层名称，如 max_tokens；不支持 request.body.max_tokens 或 metadata.user_id。配置错误、拼写错误和不支持的动作会在启动时明确报错，避免静默失效。每条规则必须明确指定协议。
+字段只支持顶层名称，如 max_tokens；不支持 request.body.max_tokens 或 metadata.user_id。配置错误、拼写错误和不支持的动作会在启动时明确报错，避免静默失效。未指定模型时必须明确指定协议。
 
 ### 配置更新
 
