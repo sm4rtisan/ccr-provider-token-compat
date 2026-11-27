@@ -11,8 +11,8 @@ jobs:
   package:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: '24'
       - name: Test source
@@ -22,7 +22,7 @@ jobs:
       - name: Test packaged extension
         run: CCR_PLUGIN_TEST_ENTRY=./dist/index.cjs node --test test.cjs
       - name: Upload installation files
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ccr-provider-token-compat
           path: |
