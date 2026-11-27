@@ -1,6 +1,6 @@
 # 供应商输出参数兼容扩展
 
-当前版本：**2.4.0**。更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**2.4.1**。更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 适用于已核对的 CCR 3.1.5 和 ai-gateway 1.0.21。独立扩展，无第三方依赖，不修改 CCR 源码。
 
@@ -132,14 +132,14 @@ http://你的CCR域名/v1/plugins/provider-token-compat
   "diagnostics": {
     "enabled": true,
     "maxEntries": 200,
-    "accessKey": "替换为自己生成的至少24位随机字符串"
+    "accessKey": "替换为自己生成的至少6位随机字符串"
   }
 }
 ```
 
 这个示例里的 rules: [] 表示关闭兼容处理，实际使用应替换成你现有的规则数组。也可以只配置 diagnostics（不写 rules），则沿用 settings.json 中默认规则。
 
-accessKey 需要为 24～256 个字符，可以用 `openssl rand -hex 24` 生成。重启网关后，将相同值填入诊断页面的“诊断访问凭证”框。不要填写供应商 API Key。未配置 accessKey 时，每次启动会生成临时凭证，桌面入口自动携带；浏览器版建议显式配置，方便重新连接。页面不把凭证写入本地存储；自动链接将凭证放在 # 后面，不作为 URL 查询参数发送。
+accessKey 需要为 6～256 个字符，可以用 `openssl rand -hex 24` 生成。重启网关后，将相同值填入诊断页面的“诊断访问凭证”框。不要填写供应商 API Key。未配置 accessKey 时，每次启动会生成临时凭证，桌面入口自动携带；浏览器版建议显式配置，方便重新连接。页面不把凭证写入本地存储；自动链接将凭证放在 # 后面，不作为 URL 查询参数发送。
 
 ### 能看到什么
 

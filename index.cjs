@@ -83,9 +83,9 @@ function setup(ctx) {
   allowedKeys(options, ['enabled', 'maxEntries', 'accessKey'], 'diagnostics');
   if (options.enabled !== undefined && typeof options.enabled !== 'boolean') throw new Error('diagnostics.enabled 必须为布尔值');
   if (options.maxEntries !== undefined && (!Number.isSafeInteger(options.maxEntries) || options.maxEntries < 1 || options.maxEntries > 1000)) throw new Error('maxEntries 必须在 1 到 1000 之间');
-  if (options.accessKey !== undefined && (typeof options.accessKey !== 'string' || options.accessKey.length < 24 || options.accessKey.length > 256)) throw new Error('diagnostics.accessKey 长度必须在 24 到 256 之间');
+  if (options.accessKey !== undefined && (typeof options.accessKey !== 'string' || options.accessKey.trim().length < 6 || options.accessKey.length > 256)) throw new Error('diagnostics.accessKey 长度必须在 6 到 256 之间');
   const enabled = options.enabled !== false;
-  const token = enabled ? (options.accessKey || randomBytes(32).toString('hex')) : '';
+  const token = enabled ? (options.accessKey?.trim() || randomBytes(32).toString('hex')) : '';
   const webToken = process.env.CCR_WEB_AUTH_TOKEN?.trim();
   const webTokenHash = enabled && webToken ? createHash('sha256').update(webToken).digest('hex') : undefined;
   ctx.registerCoreGatewayPlugin({
