@@ -7,7 +7,8 @@ const path = require('node:path');
 const http = require('node:http');
 const { spawn } = require('node:child_process');
 const { once } = require('node:events');
-const { setup, createGatewayPlugin } = require('./index.cjs');
+const pluginEntry = process.env.CCR_PLUGIN_TEST_ENTRY || './index.cjs';
+const { setup, createGatewayPlugin } = require(pluginEntry);
 
 function registration(provider = { id: 'openai', name: 'openai', baseurl: 'http://example.test' }, settings) {
   let registered;
@@ -228,7 +229,7 @@ test('non-JSON bodies pass through unchanged', () => {
 
 test('plugin metadata and runtime registration share one valid release version', () => {
   const metadata = JSON.parse(fs.readFileSync(path.join(__dirname, 'plugin.json'), 'utf8'));
-  const { manifest } = require('./index.cjs');
+  const { manifest } = require(pluginEntry);
   assert.match(metadata.version, /^\d+\.\d+\.\d+$/);
   assert.equal(manifest.version, metadata.version);
   assert.equal(registration().manifest.version, metadata.version);

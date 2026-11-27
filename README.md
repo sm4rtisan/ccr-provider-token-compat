@@ -1,6 +1,6 @@
 # 供应商输出参数兼容扩展
 
-当前版本：**2.4.5**。更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**2.5.0**。更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 适用于已核对的 CCR 3.1.5 和 ai-gateway 1.0.21。独立扩展，无第三方依赖，不修改 CCR 源码。
 
@@ -213,3 +213,9 @@ CCR_TEST_GATEWAY_ENTRY=/absolute/path/to/ai-gateway/dist/index.js node --test te
 - 删除配置支持等不兼容改动：增加首位版本号，例如 2.0.0 → 3.0.0。
 
 2.0.0 移除了旧配置；2.1.0 新增诊断，原有新版规则仍兼容。升级时先把 CCR 页面中的旧配置改为新版 match + actions。CCR 3.1.5 扩展列表没有独立的版本列；可在本目录 plugin.json 或 README 查看版本，填写版本号并不会自动增加 CCR 的显示栏目。
+
+## 自动打包
+
+推送到 `main` 分支后，GitHub Actions 会自动运行 **Package CCR extension**。打包完成后，可在运行详情的 **Artifacts** 下载 `ccr-provider-token-compat`。解压后可在 CCR 的扩展页选择该目录安装。用于扩展市场时，可以单独分发 `index.cjs`，并使用 `index.cjs.sha256` 中的校验值。
+
+本地运行 `node scripts/build.cjs` 可生成同样的文件，输出目录为 `dist/`。打包无需安装额外依赖。

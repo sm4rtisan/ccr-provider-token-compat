@@ -1,0 +1,32 @@
+name: Package CCR extension
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Test source
+        run: node --test test.cjs
+      - name: Build extension
+        run: node scripts/build.cjs
+      - name: Test packaged extension
+        run: CCR_PLUGIN_TEST_ENTRY=./dist/index.cjs node --test test.cjs
+      - name: Upload installation files
+        uses: actions/upload-artifact@v4
+        with:
+          name: ccr-provider-token-compat
+          path: |
+            dist/index.cjs
+            dist/plugin.json
+            dist/index.cjs.sha256
+          if-no-files-found: error
