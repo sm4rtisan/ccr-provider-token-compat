@@ -219,3 +219,5 @@ CCR_TEST_GATEWAY_ENTRY=/absolute/path/to/ai-gateway/dist/index.js node --test te
 推送到 `main` 分支后，GitHub Actions 会自动运行 **Package CCR extension**。打包完成后，可在运行详情的 **Artifacts** 下载 `ccr-provider-token-compat`。解压后可在 CCR 的扩展页选择该目录安装。用于扩展市场时，可以单独分发 `index.cjs`，并使用 `index.cjs.sha256` 中的校验值。
 
 本地运行 `node scripts/build.cjs` 可生成同样的文件，输出目录为 `dist/`。打包无需安装额外依赖。
+
+推送到 `main` 并通过测试后，工作流会读取插件版本，创建对应的 Git 标签和 GitHub Release，例如 `v2.5.0`，并附上安装 ZIP、单文件和校验值。已发布的版本会自动跳过，发布新版本前请更新 `plugin.json` 中的版本号。
