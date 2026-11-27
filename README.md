@@ -1,6 +1,6 @@
 # 供应商输出参数兼容扩展
 
-当前版本：**2.4.3**。更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**2.4.4**。更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 适用于已核对的 CCR 3.1.5 和 ai-gateway 1.0.21。独立扩展，无第三方依赖，不修改 CCR 源码。
 

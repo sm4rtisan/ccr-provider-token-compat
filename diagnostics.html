@@ -13,7 +13,7 @@ main>header,main>#access,main>#notice{flex-shrink:0}
 #records{flex:1;min-height:0;overflow:auto;scrollbar-gutter:stable}
 @media(max-width:600px){main{padding-bottom:12px}}
 .rule-results{margin-top:14px}.rule-results h2{margin-bottom:6px}
-.rule-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:8px;margin:8px 0}
+.rule-grid{display:grid;grid-template-columns:repeat(auto-fit,min(100%,260px));align-items:start;gap:8px;margin:8px 0}
 .rule-card{min-width:0;margin:0;border:1px solid #344247}
 .rule-card span{display:block}.rule-card button{width:100%;text-align:left;padding:0;border:0;background:none}
 .rule-card:has(button[aria-pressed=true]){border-color:#72e3c8}
@@ -44,8 +44,7 @@ function traces(container,items,selectFields){
  if(!items.length)return;
  const section=element('section','','rule-results');
  section.append(element('h2','规则匹配结果'));
- const matched=element('div','','rule-grid');
- const unmatched=element('div','','rule-grid');
+ const grid=element('div','','rule-grid');
  let selected;
  for(const item of items){
    const card=element('div','','detail rule-card');
@@ -73,14 +72,9 @@ function traces(container,items,selectFields){
      }
      card.append(line);
    }
-   (item.matched?matched:unmatched).append(card);
+   grid.append(card);
  }
- section.append(matched.childElementCount?matched:element('p','本次未命中任何规则','note'));
- if(unmatched.childElementCount){
-   const more=element('details','');
-   more.append(element('summary',`查看未命中规则（${unmatched.childElementCount}）`),unmatched);
-   section.append(more);
- }
+ section.append(grid);
  container.append(section);
 }
 function parameterComparison(container,data,trial=false){
