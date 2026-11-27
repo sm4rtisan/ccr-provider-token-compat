@@ -1,5 +1,5 @@
 'use strict';
-const { randomUUID, timingSafeEqual } = require('node:crypto');
+const { createHash, randomUUID, timingSafeEqual } = require('node:crypto');
 const { createComparison } = require('./comparison.cjs');
 const BASE = '/v1/plugins/provider-token-compat';
 const safeNumbers = new Set(['max_tokens', 'max_completion_tokens', 'max_output_tokens', 'temperature', 'top_p', 'top_k']);
@@ -87,6 +87,11 @@ function diagnosticHooks(config, api) {
     pending.delete(key(input));
   }
   function authorized(request) {
+    const webToken = request.headers['x-ccr-web-auth'];
+    if (options.webTokenHash && typeof webToken === 'string') {
+      const digest = createHash('sha256').update(webToken).digest();
+      if (timingSafeEqual(digest, Buffer.from(options.webTokenHash, 'hex'))) return true;
+    }
     const supplied = request.headers['x-diagnostics-key'];
     if (typeof supplied !== 'string' || !options.token) return false;
     const left = Buffer.from(supplied), right = Buffer.from(options.token);

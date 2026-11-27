@@ -86,12 +86,14 @@ function setup(ctx) {
   if (options.accessKey !== undefined && (typeof options.accessKey !== 'string' || options.accessKey.length < 24 || options.accessKey.length > 256)) throw new Error('diagnostics.accessKey 长度必须在 24 到 256 之间');
   const enabled = options.enabled !== false;
   const token = enabled ? (options.accessKey || randomBytes(32).toString('hex')) : '';
+  const webToken = process.env.CCR_WEB_AUTH_TOKEN?.trim();
+  const webTokenHash = enabled && webToken ? createHash('sha256').update(webToken).digest('hex') : undefined;
   ctx.registerCoreGatewayPlugin({
     key: 'provider-token-compat',
     enabled: true,
     modulePath: __filename,
     manifest,
-    config: { rules, providers, diagnostics: { enabled, maxEntries: options.maxEntries ?? 200, token } },
+    config: { rules, providers, diagnostics: { enabled, maxEntries: options.maxEntries ?? 200, token, webTokenHash } },
   });
   const appSurface = ctx.config.plugins?.find(item => item.id === ctx.pluginId)?.surfaces?.apps !== false;
   const appPermission = !ctx.permissions || ctx.permissions.includes('apps');
