@@ -12,6 +12,12 @@ main>header,main>#access,main>#notice{flex-shrink:0}
 .records-panel>#search{flex:none}
 #records{flex:1;min-height:0;overflow:auto;scrollbar-gutter:stable}
 @media(max-width:600px){main{padding-bottom:12px}}
+.rule-results{margin-top:14px}.rule-results h2{margin-bottom:6px}
+.rule-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:8px;margin:8px 0}
+.rule-card{min-width:0;margin:0;border:1px solid #344247}
+.rule-card span{display:block}.rule-card button{width:100%;text-align:left;padding:0;border:0;background:none}
+.rule-card:has(button[aria-pressed=true]){border-color:#72e3c8}
+.compare-table tr.rule-highlight>th{box-shadow:inset 3px 0 #72e3c8;background:#16352f;color:#a5f1dc}
 </style></head><body><main>
 <header><div><h1>请求诊断 <span id="version" class="muted"></span></h1><div class="muted">看清扩展命中了什么规则，调整了什么。</div></div><span class="tag">仅诊断本扩展</span></header>
 <section id="access" class="panel"><h2>连接诊断</h2><div class="note">在已登录 CCR 的同一标签页打开时会自动连接。也可以填写独立诊断凭证。</div><div class="row"><input id="key" type="password" minlength="6" maxlength="256" autocomplete="off" aria-label="诊断访问凭证" placeholder="诊断访问凭证"><button id="connect" class="primary">连接</button></div></section>
@@ -34,7 +40,49 @@ $('key').value=token;
 function notice(text,bad=false){$('notice').textContent=text;$('notice').className=bad?'error':'success';}
 async function api(suffix,options={}){const response=await fetch(location.pathname.replace(/\/$/,'')+suffix,{...options,headers:{...(webToken?{'x-ccr-web-auth':webToken}:{}),...(token?{'x-diagnostics-key':token}:{}),...(options.body?{'content-type':'application/json'}:{})},cache:'no-store'});const data=await response.json();if(!response.ok){if(response.status===401)$('access').hidden=false;throw new Error(data.error||'请求失败');}return data;}
 function element(tag,text,cls){const node=document.createElement(tag);node.textContent=text;if(cls)node.className=cls;return node;}
-function traces(container,items){for(const item of items){const block=element('div','', 'detail');block.append(element('strong',item.name),element('div',item.reason,item.matched?'success':'muted'));for(const action of item.actions){const line=element('div','', 'change');line.append(element('code',action.to?`${action.field} → ${action.to}`:action.field),element('div',action.reason));if(action.changed){line.append(element('div',`${action.before} → ${action.after}`,'muted'));if(action.targetBefore!==undefined&&action.targetBefore!=='（不存在）')line.append(element('div',`原目标值：${action.targetBefore}`,'muted'));}block.append(line);}container.append(block);}}
+function traces(container,items,selectFields){
+ if(!items.length)return;
+ const section=element('section','','rule-results');
+ section.append(element('h2','规则匹配结果'));
+ const matched=element('div','','rule-grid');
+ const unmatched=element('div','','rule-grid');
+ let selected;
+ for(const item of items){
+   const card=element('div','','detail rule-card');
+   const fields=item.actions.flatMap(action=>[action.field,action.to].filter(Boolean));
+   const heading=element(selectFields&&fields.length?'button':'div','');
+   heading.append(element('strong',item.name),element('span',item.reason,item.matched?'success':'muted'));
+   if(heading.tagName==='BUTTON'){
+     heading.type='button';
+     heading.setAttribute('aria-pressed','false');
+     heading.onclick=()=>{
+       const active=selected!==heading;
+       selected?.setAttribute('aria-pressed','false');
+       selected=active?heading:undefined;
+       heading.setAttribute('aria-pressed',String(active));
+       selectFields(active?fields:[]);
+     };
+   }
+   card.append(heading);
+   for(const action of item.actions){
+     const line=element('div','','change');
+     line.append(element('code',action.to?`${action.field} → ${action.to}`:action.field),element('div',action.reason));
+     if(action.changed){
+       line.append(element('div',`${action.before} → ${action.after}`,'muted'));
+       if(action.targetBefore!==undefined&&action.targetBefore!=='（不存在）')line.append(element('div',`原目标值：${action.targetBefore}`,'muted'));
+     }
+     card.append(line);
+   }
+   (item.matched?matched:unmatched).append(card);
+ }
+ section.append(matched.childElementCount?matched:element('p','本次未命中任何规则','note'));
+ if(unmatched.childElementCount){
+   const more=element('details','');
+   more.append(element('summary',`查看未命中规则（${unmatched.childElementCount}）`),unmatched);
+   section.append(more);
+ }
+ container.append(section);
+}
 function parameterComparison(container,data,trial=false){
  const outer=element('section','', 'comparison');
  outer.append(element('h2','请求参数对比'));
@@ -61,12 +109,17 @@ function parameterComparison(container,data,trial=false){
  const body=table.createTBody();
  const empty=element('div','没有发现参数变化','empty');
  const wording={added:'新增',removed:'移除',changed:'修改',unknown:'无法判断',unavailable:'未捕获'};
+ let selectedFields=new Set();
+ const selection=element('p','','note');
+ selection.setAttribute('role','status');
+ selection.hidden=true;
  function draw(){
    body.replaceChildren();
-   const shown=rows.filter(row=>toggle.checked||changed(row)||uncertain(row));
+   const shown=rows.filter(row=>toggle.checked||changed(row)||uncertain(row)||selectedFields.has(row.name));
    empty.hidden=shown.length>0;
    for(const row of shown){
      const line=body.insertRow();
+     if(selectedFields.has(row.name))line.classList.add('rule-highlight');
      const field=element('th',row.name);
      field.scope='row';
      line.append(field);
@@ -84,12 +137,21 @@ function parameterComparison(container,data,trial=false){
  }
  toggle.onchange=draw;
  draw();
- outer.append(table,empty);
+ outer.append(selection,table,empty);
  if(data.stages.some(stage=>stage.truncated)) outer.append(element('p','每栏最多采集 64 个顶层字段。','note'));
  outer.append(element('p','扩展处理后显示的是本扩展的结果，CCR 后续仍可能调整请求。','note'));
  container.append(outer);
+ return fields=>{
+   selectedFields=new Set(fields);
+   selection.hidden=!fields.length;
+   selection.textContent=rows.some(row=>selectedFields.has(row.name))
+     ?'已标出所选规则涉及的字段。'
+     :'本次参数对比未采集到这条规则涉及的字段。';
+   draw();
+   if(fields.length)(body.querySelector('.rule-highlight')||selection).scrollIntoView({block:'nearest'});
+ };
 }
-function render(){const q=$('search').value.trim().toLowerCase();const shown=records.filter(record=>(record.requestId+' '+record.provider).toLowerCase().includes(q));const root=$('records');root.replaceChildren();root.className='';if(!shown.length){root.append(element('div',q?'没有匹配的记录':'暂无记录，发起一次实际对话后点击刷新','empty'));return;}for(const record of shown){const block=element('details','', 'record');const title=element('summary',`${new Date(record.time).toLocaleTimeString()} · ${record.provider} · ${record.protocol} · ${record.changed?'已调整':'未调整'}`);block.append(title,element('div',`请求编号：${record.requestId||'未提供'} · ${record.outcome}${record.status?' · HTTP '+record.status:''}`,'muted'));if(record.comparison)parameterComparison(block,record.comparison);traces(block,record.traces);root.append(block);}}
+function render(){const q=$('search').value.trim().toLowerCase();const shown=records.filter(record=>(record.requestId+' '+record.provider).toLowerCase().includes(q));const root=$('records');root.replaceChildren();root.className='';if(!shown.length){root.append(element('div',q?'没有匹配的记录':'暂无记录，发起一次实际对话后点击刷新','empty'));return;}for(const record of shown){const block=element('details','', 'record');const title=element('summary',`${new Date(record.time).toLocaleTimeString()} · ${record.provider} · ${record.protocol} · ${record.changed?'已调整':'未调整'}`);block.append(title,element('div',`请求编号：${record.requestId||'未提供'} · ${record.outcome}${record.status?' · HTTP '+record.status:''}`,'muted'));const rules=element('div','');block.append(rules);const selectFields=record.comparison&&parameterComparison(block,record.comparison);traces(rules,record.traces,selectFields);root.append(block);}}
 async function refresh(){const data=await api('/records');records=data.entries;const selectedProvider=$('provider').value;$('version').textContent='v'+data.version;$('retention').textContent=`最近最多 ${data.maxEntries} 条，仅保存在内存，网关重启后清空；不保存对话和请求头。`;$('provider').replaceChildren(...data.providers.map(name=>{const option=element('option',name);option.value=name;return option;}));if(data.providers.includes(selectedProvider))$('provider').value=selectedProvider;render();$('access').hidden=true;notice('已连接，请手动刷新获取最新记录。');}
 async function action(button,run){button.disabled=true;try{await run();}catch(error){notice(error.message,true);}finally{button.disabled=false;}}
 $('open-trial').onclick=()=>$('trial-dialog').showModal();
@@ -98,6 +160,6 @@ $('connect').onclick=()=>action($('connect'),async()=>{const value=$('key').valu
 $('refresh').onclick=()=>action($('refresh'),refresh);
 $('clear').onclick=()=>action($('clear'),async()=>{await api('/records',{method:'DELETE'});await refresh();notice('处理记录已清空。');});
 $('search').oninput=render;
-$('trial').onclick=()=>action($('trial'),async()=>{const result=$('trialResult');result.replaceChildren();try{let body,rules;try{body=JSON.parse($('body').value);}catch{throw new Error('请求正文不是有效的 JSON，请检查引号、逗号和括号。');}try{rules=$('rules').value.trim()?JSON.parse($('rules').value):undefined;}catch{throw new Error('临时规则不是有效的 JSON 数组，请检查引号、逗号和括号。');}const data=await api('/trial',{method:'POST',body:JSON.stringify({provider:$('provider').value,protocol:$('protocol').value,body,rules})});result.append(element('strong',data.changed?'试跑完成：请求会被调整':'试跑完成：请求无需调整'),element('div',data.note,'note'));if(data.comparison)parameterComparison(result,data.comparison,true);traces(result,data.traces);}catch(error){result.append(element('div',error.message,'error'));throw error;}});
+$('trial').onclick=()=>action($('trial'),async()=>{const result=$('trialResult');result.replaceChildren();try{let body,rules;try{body=JSON.parse($('body').value);}catch{throw new Error('请求正文不是有效的 JSON，请检查引号、逗号和括号。');}try{rules=$('rules').value.trim()?JSON.parse($('rules').value):undefined;}catch{throw new Error('临时规则不是有效的 JSON 数组，请检查引号、逗号和括号。');}const data=await api('/trial',{method:'POST',body:JSON.stringify({provider:$('provider').value,protocol:$('protocol').value,body,rules})});result.append(element('strong',data.changed?'试跑完成：请求会被调整':'试跑完成：请求无需调整'),element('div',data.note,'note'));const ruleResults=element('div','');result.append(ruleResults);const selectFields=data.comparison&&parameterComparison(result,data.comparison,true);traces(ruleResults,data.traces,selectFields);}catch(error){result.append(element('div',error.message,'error'));throw error;}});
 if(token || webToken)action($('connect'),refresh);
 </script></body></html>
